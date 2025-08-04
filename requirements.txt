@@ -1,0 +1,8 @@
+scikit-learn==1.7.1
+joblib==1.5.1
+fastapi==0.116.1
+uvicorn==0.35.0
+zenml==0.84.1
+requests==2.32.4
+python-dotenv==1.1.1
+rich==14.1.0
