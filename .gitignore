@@ -1,0 +1,25 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*.pkl
+
+# ZenML/MLflow artifacts
+mlruns/
+zenml/.zen
+
+# Logs
+*.log
+inference_api/inference.log
+
+# Docker image tarballs
+*.tar
+
+# Environment files
+.env
+
+# Editor settings
+.vscode/
+.idea/
+
+# OS system files
+.DS_Store

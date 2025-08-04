@@ -1,0 +1,98 @@
+name: Train, Package, and Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  train-package-deploy:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Set up CML
+      uses: iterative/setup-cml@v2
+
+    - name: Install Dependencies
+      run: |
+        # Install system and Python deps
+        sudo apt-get update
+        sudo apt-get install -y python3.11-distutils python3.11-venv
+        python -m pip install --upgrade pip
+        pip install --prefer-binary -r requirements.txt
+
+        # Initialize ZenML and integrations
+        zenml integration install mlflow -y
+        zenml integration list
+        zenml init
+
+
+    - name: Register ZenML Local Stack
+      run: |
+        # Register components
+        zenml orchestrator register local_orchestrator --flavor=local || true
+        zenml experiment-tracker register mlflow_tracker --flavor=mlflow || true
+        zenml artifact-store register local_artifact_store --flavor=local --path=$(pwd)/artifacts || true
+
+
+        # Register a new stack that includes both components
+        zenml stack register local_stack \
+          -o local_orchestrator \
+          -a local_artifact_store \
+          -e mlflow_tracker || true
+
+        # Set that stack as active
+        zenml stack set local_stack
+
+    - name: Run Training Pipeline Locally
+      run: python run_pipeline.py
+
+    - name: Build Docker Image
+      run: docker build -t local-model-api .
+
+    - name: Save Docker Image as TAR
+      run: docker save local-model-api:latest -o model-api-image.tar
+
+    - name: Simulate Inference Requests (Log Monitoring)
+      run: |
+        nohup uvicorn inference_api.app:app --host 0.0.0.0 --port 8080 &
+        sleep 5
+        curl -X POST http://localhost:8080/predict -H "Content-Type: application/json" -d '{"features": [5.1, 3.5, 1.4, 0.2]}'
+        curl -X POST http://localhost:8080/predict -H "Content-Type: application/json" -d '{"features": [6.2, 3.4, 5.4, 2.3]}'
+        curl -X POST http://localhost:8080/predict -H "Content-Type: application/json" -d '{"features": [5.9, 3.0, 5.1, 1.8]}'
+        sleep 2
+        pkill -f uvicorn || true
+
+    - name: Generate PR Report
+      if: github.event_name == 'pull_request'
+      run: python generate_report.py   
+
+    - name: Upload Docker Image & Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: model-image-logs
+        path: |
+          model-api-image.tar
+          inference_api/inference.log
+          inference_api/model.pkl
+        retention-days: 90 
+
+    - name: Post CML PR Comment
+      if: github.event_name == 'pull_request'
+      env:
+        REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        cml comment create results.md
